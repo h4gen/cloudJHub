@@ -6,6 +6,7 @@ escapism
 cronutils
 fabric3
 pytz
+cryptography
 
 # optional; as needed for authentication
 oauthenticator
