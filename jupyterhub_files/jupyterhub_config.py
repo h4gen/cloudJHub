@@ -43,6 +43,9 @@ c.ConfigurableHTTPProxy.auth_token	=  binascii.b2a_hex(os.urandom(16))
 #c.HubAuth.api_token		        = ' PUT token here'
 c.HubAuth.api_token		        = binascii.b2a_hex(os.urandom(16))
 
+#Configure Jupyterlab
+c.Spawner.default_url = '/lab'
+c.Spawner.cmd = ['jupyter-labhub']
 
 with open("/etc/jupyterhub/api_token.txt", 'r') as f:
     api_token = f.read().strip()
