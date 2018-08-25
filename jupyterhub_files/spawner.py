@@ -378,7 +378,7 @@ class InstanceSpawner(Spawner):
         start_notebook_cmd = " ".join(start_notebook_cmd)
         self.log.info("Starting user %s jupyterhub" % self.user.name)
         with settings(user = self.user.name, key_filename = FABRIC_DEFAULTS["key_filename"],  host_string=worker_ip_address_string):
-             yield sudo("%s %s --user=%s --notebook-dir=/home/%s/ --allow-root > /tmp/jupyter.log 2>&1 &" % (lenv, start_notebook_cmd,self.user.name,self.user.name),  pty=False)
+             yield sudo("%s %s --user=%s --notebook-dir=/ --allow-root > /tmp/jupyter.log 2>&1 &" % (lenv, start_notebook_cmd,self.user.name),  pty=False)
         self.log.debug("just started the notebook for user %s, waiting." % self.user.name)
         try:
             self.user.settings[self.user.name] = instance.public_ip_address
@@ -417,7 +417,7 @@ class InstanceSpawner(Spawner):
                 MinCount=1,
                 MaxCount=1,
                 KeyName=SERVER_PARAMS["KEY_NAME"],
-                InstanceType=SERVER_PARAMS["INSTANCE_TYPE"],
+                InstanceType=self.user_options['INSTANCE_TYPE'],
                 SubnetId=SERVER_PARAMS["SUBNET_ID"],
                 SecurityGroupIds=SERVER_PARAMS["WORKER_SECURITY_GROUPS"],
                 BlockDeviceMappings=BDM,
@@ -433,4 +433,11 @@ class InstanceSpawner(Spawner):
         # blocking calls should be wrapped in a Future
         yield retry(instance.wait_until_running)
         return instance
+    
+    def options_from_form(self, formdata):
+        options = {}
+        arg_s = formdata.get('instance_type', [''])[0].strip()
+        if arg_s:
+            options['INSTANCE_TYPE'] = arg_s
+        return options
     

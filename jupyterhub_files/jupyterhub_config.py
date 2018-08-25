@@ -45,7 +45,7 @@ c.HubAuth.api_token		        = binascii.b2a_hex(os.urandom(16))
 
 #Configure Jupyterlab
 c.Spawner.default_url = '/lab'
-c.Spawner.cmd = ['jupyter-labhub']
+c.Spawner.cmd = ['jupyterhub-singleuser']
 
 with open("/etc/jupyterhub/api_token.txt", 'r') as f:
     api_token = f.read().strip()
@@ -57,12 +57,8 @@ c.Spawner.start_timeout = 300
 
 # when there is already a spawn pending for a user
 c.Spawner.options_form = """
-<center> You will be automatically redirected. Please hold on. Servers can take up to 2 minutes to boot up. </center>
-<center> If you are not redirected within 2 minutes, click <a href="/hub/home">here</a></center>
-
-<script>
-document.getElementById("spawn_form").submit();
-</script>
+<label for="instance_type">Type in instance type</label>
+<input name="instance_type" placeholder="e.g. t2.small"></input>
 """
 #c.JupyterHub.tornado_settings = {
 #    slow_spawn_timeout : 30
