@@ -22,7 +22,9 @@ from fabric.api import env, run, put, sudo
 from fabric.exceptions import NetworkError
 
 from secure import (AWS_ACCESS_KEY_ID, AWS_SECRET_KEY, KEY_NAME, KEY_PATH,
-                    MANAGER_IAM_ROLE, VPC_ID)
+                    MANAGER_IAM_ROLE, VPC_ID, WORKER_GID, MANAGER1_GID, MANAGER2_GID)
+
+MAX_RETRIES = int(10e9)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -83,7 +85,7 @@ def launch_manager(config):
 
     # Wait for server to finish booting (literally keep trying until you can
     # successfully run a command on the server via ssh)
-    retry(run, "# waiting for ssh to be connectable...", max_retries=100)
+    retry(run, "# waiting for ssh to be connectable...", max_retries=MAX_RETRIES)
 
     # These parameters will be used by the manager to launch a worker
     worker_server_name = "JUPYTER_HUB_%s_%s_WORKER" % (availability_zone.split("-")[-1], config.cluster_name)
@@ -176,7 +178,7 @@ def make_worker_ami(config, ec2, security_group_list):
     env.user = config.server_username
 
     # Wait for server to finish booting (keep trying until you can successfully run a command on the server via ssh)
-    retry(run, "# waiting for ssh to be connectable...", max_retries=100)
+    retry(run, "# waiting for ssh to be connectable...", max_retries=MAX_RETRIES)
 
     sudo("apt-get -qq -y update")
     sudo("apt-get -qq -y install -q python python-setuptools python-dev")
@@ -207,7 +209,7 @@ def make_worker_ami(config, ec2, security_group_list):
     worker_ami = instance.create_image(Name=ami_name)
 
     # Wait until AMI is ready or 300 seconds have elapsed to allow for server restart
-    for i in range(100):
+    for i in range(10000):
         if get_resource(config.region).Image(worker_ami.id).state == "available":
             break
         logger.info("AMI not ready yet (running for ~%s seconds)" % (i * 3))
@@ -221,12 +223,22 @@ def make_worker_ami(config, ec2, security_group_list):
 ######################################################################################################################
 
 def create_security_group(name):
-    security_group = ec2_connection(config.region).create_security_group(
-        VpcId=VPC_ID,
-        GroupName=name,
-        Description=name
-    )
-    return get_resource(config.region).SecurityGroup(security_group["GroupId"])
+    try:
+        security_group = ec2_connection(config.region).create_security_group(
+            VpcId=VPC_ID,
+            GroupName=name,
+            Description=name
+        )
+        group_id = security_group["GroupId"]
+    except ClientError:
+        if name == 'jupyter-hub-jhub-manager2':
+            group_id = MANAGER2_GID
+        elif name == 'jupyter-hub-jhub-manager':
+            group_id = MANAGER1_GID
+        elif name == 'jupyter-hub-jhub-worker':
+            group_id = WORKER_GID
+            
+    return get_resource(config.region).SecurityGroup(group_id)
 
 
 def ec2_connection(region):
@@ -260,37 +272,47 @@ def create_server_security_groups():
     logger.info("Creating security groups")
     manager_security_group_name = "jupyter-hub-%s-manager" % config.cluster_name
     manager_security_group = create_security_group(manager_security_group_name)
-    manager_security_group.authorize_ingress(
-            FromPort=22, ToPort=22, IpProtocol="TCP", CidrIp="0.0.0.0/0"
-    )
-    manager_security_group.authorize_ingress(
-            FromPort=80, ToPort=80, IpProtocol="TCP", CidrIp="0.0.0.0/0"
-    )
-    manager_security_group.authorize_ingress(
-            FromPort=443, ToPort=443, IpProtocol="TCP", CidrIp="0.0.0.0/0"
-    )
+    try:
+        manager_security_group.authorize_ingress(
+                FromPort=22, ToPort=22, IpProtocol="TCP", CidrIp="0.0.0.0/0"
+        )
+        manager_security_group.authorize_ingress(
+                FromPort=80, ToPort=80, IpProtocol="TCP", CidrIp="0.0.0.0/0"
+        )
+        manager_security_group.authorize_ingress(
+                FromPort=443, ToPort=443, IpProtocol="TCP", CidrIp="0.0.0.0/0"
+        )
+    except ClientError:
+        pass
 
     worker_security_group_name = "jupyter-hub-%s-worker" % config.cluster_name
     worker_security_group = create_security_group(worker_security_group_name)
-    worker_security_group.authorize_ingress(IpPermissions=[{
-        "IpProtocol": "-1", "ToPort": -1, "FromPort": -1,
-        "UserIdGroupPairs": [{"GroupId": manager_security_group.id}]
-    }])
-
+    try:
+        worker_security_group.authorize_ingress(IpPermissions=[{
+            "IpProtocol": "-1", "ToPort": -1, "FromPort": -1,
+            "UserIdGroupPairs": [{"GroupId": manager_security_group.id}]
+        }])
+    except ClientError:
+        pass
+    
     # Create a separate manager security group so that groups do not have cyclic
     # reference, in order to make deleting easier
     manager_security_group_name = "jupyter-hub-%s-manager2" % config.cluster_name
     manager_security_group2 = create_security_group(manager_security_group_name)
-    manager_security_group2.authorize_ingress(IpPermissions=[
-        {#Jupyterhub proxy
-            "IpProtocol": "TCP", "ToPort": 8888, "FromPort": 8888,
-            "UserIdGroupPairs": [{"GroupId": worker_security_group.id}]
-        },
-        {#jupyterhub API
-            "IpProtocol": "TCP", "ToPort": 8081, "FromPort": 8081,
-            "UserIdGroupPairs": [{"GroupId": worker_security_group.id}]
-        },
-    ])
+    try:
+        manager_security_group2.authorize_ingress(IpPermissions=[
+            {#Jupyterhub proxy
+                "IpProtocol": "TCP", "ToPort": 8888, "FromPort": 8888,
+                "UserIdGroupPairs": [{"GroupId": worker_security_group.id}]
+            },
+            {#jupyterhub API
+                "IpProtocol": "TCP", "ToPort": 8081, "FromPort": 8081,
+                "UserIdGroupPairs": [{"GroupId": worker_security_group.id}]
+            },
+        ])
+    except ClientError:
+        pass
+    
     return worker_security_group, manager_security_group, manager_security_group2
 
 
@@ -318,7 +340,8 @@ def launch_server(config, ec2, security_groups_list, size=8):
             "Groups": security_groups_list
         }],
         IamInstanceProfile={"Arn": MANAGER_IAM_ROLE},
-        BlockDeviceMappings=[boot_drive]
+        BlockDeviceMappings=[boot_drive], 
+        max_retries=MAX_RETRIES
     )
     instance_id = reservation["Instances"][0]["InstanceId"]
     instance = get_resource(config.region).Instance(instance_id)
@@ -373,13 +396,15 @@ def retry(function, *args, **kwargs):
     timeout = kwargs.pop("timeout", 3)
     for i in range(max_retries):
         print (".", sys.stdout.flush())
+        
         try:
             return function(*args, **kwargs)
         except (ClientError, NetworkError, WaiterError) as e:
             logger.debug("retrying %s, (~%s seconds elapsed)" % (function, i * 3))
-            sleep(timeout)
-    logger.error("hit max retries on %s" % function)
-    raise e
+            logger.error("hit max retries=%d on %s" % (max_retries, function))
+            raise e
+            
+        sleep(timeout)
 
 #####################################################################################################################
 #################################################### MAIN ###########################################################

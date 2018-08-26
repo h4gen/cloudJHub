@@ -46,10 +46,15 @@ c.ConfigurableHTTPProxy.auth_token	=  binascii.b2a_hex(os.urandom(16))
 c.HubAuth.api_token		        = binascii.b2a_hex(os.urandom(16))
 
 #Configure Jupyterlab
+<<<<<<< HEAD
 #c.Spawner.default_url = '/lab'
 c.Spawner.cmd = ['jupyterhub-singleuser']
 #c.Spawner.cmd = ['jupyter-labhub']
 
+=======
+c.Spawner.default_url = '/lab'
+c.Spawner.cmd = ['jupyterhub-singleuser']
+>>>>>>> 4d1b05085845dbfbb347fd1df84c0dfcbd3c3013
 
 with open("/etc/jupyterhub/api_token.txt", 'r') as f:
     api_token = f.read().strip()
@@ -59,6 +64,14 @@ c.Spawner.poll_interval = 10
 c.Spawner.http_timeout = 300
 c.Spawner.start_timeout = 300
 
+<<<<<<< HEAD
+=======
+# when there is already a spawn pending for a user
+c.Spawner.options_form = """
+<label for="instance_type">Type in instance type</label>
+<input name="instance_type" placeholder="e.g. t2.small"></input>
+"""
+>>>>>>> 4d1b05085845dbfbb347fd1df84c0dfcbd3c3013
 #c.JupyterHub.tornado_settings = {
 #    slow_spawn_timeout : 30
 #}

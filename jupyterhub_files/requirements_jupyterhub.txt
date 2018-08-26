@@ -7,7 +7,10 @@ cronutils
 fabric3
 pytz
 cryptography>=1.5
+<<<<<<< HEAD
 psycopg2
+=======
+>>>>>>> 4d1b05085845dbfbb347fd1df84c0dfcbd3c3013
 
 # optional; as needed for authentication
 oauthenticator
