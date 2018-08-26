@@ -1,12 +1,17 @@
-cloudJHub
+idaJHub
 =======================
-An implementation of JupyterHub within the Amazon cloud (AWS), with automatic scaling up and down.
+An implementation of JupyterHub within the Amazon cloud (AWS) for use in a professional data science context.
+This software is a fork of github.com/harvard/cloudJHub.
+idaHub aims on giving the data scientist maximum control over his development, while sustaining the integrity of the data.
 
 ### Overview ###
 
-This system launches online Jupyter notebook coding environments for users. Users can log in without any setup and
-start using Jupyter Notebook. Users each get an EC2 instance that is created when the user first logs in. The instance
+This system launches online Jupyter Lab coding environments for users. Users can log in without any setup and
+start using Jupyter Lab. Users each get an EC2 instance that is created when the user first logs in. The instance
 is stopped when the user is deemed inactive (to save on hosting costs) and started again when the user logs back in.
+
+In case of server termination volumes are automatically reattached or other volumes can be attached or recreated from snapshots.
+The instance type can be easily scaled to adapt the instance to the respective workload.
 
 Deploying The System
 -----------------------------------
