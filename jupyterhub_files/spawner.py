@@ -22,6 +22,17 @@ def get_local_ip_address():
     s.close()
     return ip_address
 
+class ResourceNotFound(Exception):
+    pass
+
+class ServerNotFound(ResourceNotFound):
+    print('Server not found in database')
+    pass
+
+class VolumeNotFound(ResourceNotFound):
+    print('Volume not found in database')
+    pass
+
 with open("/etc/jupyterhub/server_config.json", "r") as f:
     SERVER_PARAMS = json.load(f) # load local server parameters
 
@@ -32,7 +43,6 @@ WORKER_USERNAME  = SERVER_PARAMS["WORKER_USERNAME"]
 
 
 WORKER_TAGS = [ #These tags are set on every server created by the spawner
-    {"Key": "Name", "Value": SERVER_PARAMS["WORKER_SERVER_NAME"]},
     {"Key": "Owner", "Value": SERVER_PARAMS["WORKER_SERVER_OWNER"]},
     {"Key": "Creator", "Value": SERVER_PARAMS["WORKER_SERVER_OWNER"]},
     {"Key": "Jupyter Cluster", "Value": SERVER_PARAMS["JUPYTER_CLUSTER"]},
@@ -166,9 +176,15 @@ class InstanceSpawner(Spawner):
             else:
                 # if instance is in pending, shutting-down, or rebooting state
                 raise web.HTTPError(503, "Unknown server state for %s. Please try again in a few minutes" % self.user.name)
-        except Server.DoesNotExist:
-            self.log.info("\nserver DNE for user %s\n" % self.user.name)
-            instance = yield self.create_new_instance()
+        except ServerNotFound:
+            self.log.info("\nServer DNE for user %s\n" % self.user.name)
+            try:
+                volume = yield self.get_volume() #cannot be a thread pool...
+            except VolumeNotFound:
+                self.log.info("\nVolume DNE for user %s\n" % self.user.name)
+                volume = None
+                
+            instance = yield self.create_new_instance(Volume=volume)
             yield self.start_worker_server(instance, new_server=True)
             # self.notebook_should_be_running = False
             self.log.debug("%s , %s" % (instance.private_ip_address, NOTEBOOK_SERVER_PORT))
@@ -287,10 +303,34 @@ class InstanceSpawner(Spawner):
         return (ret)
 
     
+#    @gen.coroutine
+#    def get_instance(self):
+#        """ This returns a boto Instance resource; if boto can't find the instance or if no entry for instance in database,
+#            it raises Server.DoesNotExist error and removes database entry if appropriate """
+#        self.log.debug("function get_instance for user %s" % self.user.name)
+#        server = Server.get_server(self.user.name)
+#        resource = yield retry(boto3.resource, "ec2", region_name=SERVER_PARAMS["REGION"])
+#        try:
+#            ret = yield retry(resource.Instance, server.server_id)
+#            self.log.debug("return for get_instance for user %s: %s" % (self.user.name, ret))
+#            # boto3.Instance is lazily loaded. Force with .load()
+#            yield retry(ret.load)
+#            if ret.meta.data is None:
+#                Server.remove_server(server.server_id)
+#                raise Server.DoesNotExist()
+#            return ret
+#        except ClientError as e:
+#            self.log.error("get_instance client error: %s" % e)
+#            if "InvalidInstanceID.NotFound" not in str(e):
+#                self.log.error("Couldn't find instance for user '%s'" % self.user.name)
+#                Server.remove_server(server.server_id)
+#                raise Server.DoesNotExist()
+#            raise e
+
     @gen.coroutine
     def get_instance(self):
         """ This returns a boto Instance resource; if boto can't find the instance or if no entry for instance in database,
-            it raises Server.DoesNotExist error and removes database entry if appropriate """
+            it raises ServerNotFound error and removes database entry if appropriate """
         self.log.debug("function get_instance for user %s" % self.user.name)
         server = Server.get_server(self.user.name)
         resource = yield retry(boto3.resource, "ec2", region_name=SERVER_PARAMS["REGION"])
@@ -300,16 +340,42 @@ class InstanceSpawner(Spawner):
             # boto3.Instance is lazily loaded. Force with .load()
             yield retry(ret.load)
             if ret.meta.data is None:
-                Server.remove_server(server.server_id)
-                raise Server.DoesNotExist()
+                raise ServerNotFound
             return ret
         except ClientError as e:
             self.log.error("get_instance client error: %s" % e)
             if "InvalidInstanceID.NotFound" not in str(e):
                 self.log.error("Couldn't find instance for user '%s'" % self.user.name)
                 Server.remove_server(server.server_id)
-                raise Server.DoesNotExist()
+                raise ServerNotFound
             raise e
+            
+    @gen.coroutine
+    def get_volume(self):
+        """ This returns a boto volume resource for the case no instance was found. 
+        If boto can't find the volume or if no entry for instance in database,
+            it raises VolumeNotFound error and removes database entry if appropriate """
+        self.log.debug("function get_resource for user %s" % self.user.name)
+        server = Server.get_server(self.user.name)
+        resource = yield retry(boto3.resource, "ec2", region_name=SERVER_PARAMS["REGION"])
+        try:
+            ret = yield retry(resource.Volume, server.ebs_volume_id)
+            self.log.debug("return for get_volume for user %s: %s" % (self.user.name, ret))
+            # boto3.Volume is lazily loaded. Force with .load()
+            yield retry(ret.load)
+            if ret.meta.data is None:
+                Server.remove_server(server.server_id)
+                raise VolumeNotFound
+            return ret
+        except ClientError as e:
+            self.log.error("get_instance client error: %s" % e)
+            if "InvalidInstanceID.NotFound" not in str(e):
+                self.log.error("Couldn't find instance for user '%s'" % self.user.name)
+                Server.remove_server(server.server_id)
+                raise VolumeNotFound
+            raise e
+            
+        
     
     @gen.coroutine
     def start_worker_server(self, instance, new_server=False):
@@ -400,11 +466,12 @@ class InstanceSpawner(Spawner):
         yield self.is_notebook_running(worker_ip_address_string, attempts=30)
         
     @gen.coroutine
-    def create_new_instance(self):
+    def create_new_instance(self, Volume=None):
         """ Creates and boots a new server to host the worker instance."""
         self.log.debug("function create_new_instance %s" % self.user.name)
         ec2 = boto3.client("ec2", region_name=SERVER_PARAMS["REGION"])
         resource = boto3.resource("ec2", region_name=SERVER_PARAMS["REGION"])
+        resource_vol = boto3.resource("ec2", region_name=SERVER_PARAMS["REGION"])
         BDM = []
         boot_drive = {'DeviceName': '/dev/sda1',  # this is to be the boot drive
                       'Ebs': {'VolumeSize': SERVER_PARAMS["WORKER_EBS_SIZE"],  # size in gigabytes
@@ -414,16 +481,27 @@ class InstanceSpawner(Spawner):
                               }
                      }
         BDM = [boot_drive]
-        if SERVER_PARAMS["USER_HOME_EBS_SIZE"] > 0:
-#            user_drive = {'DeviceName': '/dev/sdf',  # this is to be the user data drive
-#                          'Ebs': {'VolumeSize': SERVER_PARAMS["USER_HOME_EBS_SIZE"],  # size in gigabytes
-#                                  'DeleteOnTermination': False,
-#                                  'VolumeType': 'gp2',  # General Purpose SSD
-#                                  }
-#                         }
+        
+        # Handle EBS
+        if Volume:
+            volume_id = Volume.id
+        elif self.user_options['EBS_VOL_ID']:
+            volume_id = self.user_options['EBS_VOL_ID']
+        elif self.user_options['EBS_VOL_SIZE'] > 0:
             volume = yield retry(ec2.create_volume, AvailabilityZone = SERVER_PARAMS["REGION"]+'b', 
-                                       Size = SERVER_PARAMS["USER_HOME_EBS_SIZE"], 
+                                       Size = self.user_options['EBS_VOL_SIZE'], 
                                        VolumeType = 'gp2')
+            volume_id = volume['VolumeId']
+            yield retry(resource_vol.create_tags, Resources=[volume_id], Tags=[{"Key": "Name", "Value": 'jhub_worker_volume_' + self.user.name}])
+        elif self.user_options['EBS_SNAP_ID']:
+            volume = yield retry(ec2.create_volume, AvailabilityZone = SERVER_PARAMS["REGION"]+'b', 
+                                       Size = self.user_options['EBS_VOL_SIZE'], 
+                                       SnapshotId=self.user_options['EBS_SNAP_ID'],
+                                       VolumeType = 'gp2')
+            volume_id = volume['VolumeId']
+            yield retry(resource_vol.create_tags, Resources=[volume_id], Tags=[{"Key": "Name", "Value": 'jhub_worker_volume_' + self.user.name}])
+        else:
+            raise Exception('No EBS volume-id and no volume size provided.')
 
         # create new instance
         reservation = yield retry(
@@ -438,13 +516,17 @@ class InstanceSpawner(Spawner):
                 BlockDeviceMappings=BDM,
         )
         instance_id = reservation["Instances"][0]["InstanceId"]
-        volume_id = volume['VolumeId']
         instance = yield retry(resource.Instance, instance_id)
+        #if an old volume is restored from a terminated instance, the user has to be updated, e.g. delted and newly saved
+        if Volume:
+            server = Server.get_server(self.user.name)
+            Server.remove_server(server.server_id)
         Server.new_server(instance_id, self.user.name, volume_id)
         yield retry(instance.wait_until_exists)
         # add server tags; tags cannot be added until server exists
         yield retry(instance.create_tags, Tags=WORKER_TAGS)
         yield retry(instance.create_tags, Tags=[{"Key": "User", "Value": self.user.name}])
+        yield retry(instance.create_tags, Tags=[{"Key": "Name", "Value": SERVER_PARAMS["WORKER_SERVER_NAME"] + '_' + self.user.name}])
         # start server
         # blocking calls should be wrapped in a Future
         yield retry(instance.wait_until_running)
@@ -456,9 +538,21 @@ class InstanceSpawner(Spawner):
         return instance
     
     def options_from_form(self, formdata):
+        '''
+        Parses arguments from the options form to pass to the spawner.
+        Output can be accessed via self.user_options
+        '''
         options = {}
-        arg_s = formdata.get('instance_type', [''])[0].strip()
-        if arg_s:
-            options['INSTANCE_TYPE'] = arg_s
+        self.log.debug(str(formdata))
+        inst_type = formdata['instance_type'][0].strip()
+        ebs_vol_id = formdata['ebs_vol_id'][0].strip()
+        ebs_vol_size = formdata['ebs_vol_size'][0].strip()
+        ebs_snap_id = formdata['ebs_snap_id'][0].strip()
+        
+        options['INSTANCE_TYPE'] = inst_type if inst_type else ''
+        options['EBS_VOL_ID'] = ebs_vol_id if ebs_vol_id else ''
+        options['EBS_SNAP_ID'] = ebs_snap_id if ebs_snap_id else ''
+        options['EBS_VOL_SIZE'] = int(ebs_vol_size) if ebs_vol_size else 0
+        self.log.debug(str(options))
         return options
     
