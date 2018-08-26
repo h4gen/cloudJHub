@@ -6,6 +6,8 @@ escapism
 cronutils
 fabric3
 pytz
+cryptography>=1.5
+psycopg2
 
 # optional; as needed for authentication
 oauthenticator
