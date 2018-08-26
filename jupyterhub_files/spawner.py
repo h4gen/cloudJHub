@@ -13,6 +13,7 @@ from jupyterhub.spawner import Spawner
 from concurrent.futures import ThreadPoolExecutor
 
 from models import Server
+from aws_ressources import AWS_INSTANCE_TYPES
 
 def get_local_ip_address():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -133,6 +134,17 @@ class InstanceSpawner(Spawner):
                 self.port = self.user.server.port = NOTEBOOK_SERVER_PORT
                 return instance.private_ip_address, NOTEBOOK_SERVER_PORT
             elif instance.state["Name"] in ["stopped", "stopping", "pending", "shutting-down"]:
+                #For case that instance is stopped, the attributes are modified
+                if instance.state["Name"] == "stopped":
+                    self.log.debug(str(self.user_options['INSTANCE_TYPE']))
+                    if self.user_options['INSTANCE_TYPE'] in AWS_INSTANCE_TYPES:
+                        try:
+                            yield retry(instance.modify_attribute, Attribute='instanceType', Value = self.user_options['INSTANCE_TYPE'])
+                        except:
+                            self.log.debug("Instance type for user %s could not be changed." % self.user.name)
+                    else:
+                        self.log.debug("Instance type for user %s could not recognized." % self.user.name)
+                    
                 #Server needs to be booted, do so.
                 self.log.info("Starting user %s instance " % self.user.name)
                 yield retry(instance.start, max_retries=LONG_RETRY_COUNT)
@@ -378,7 +390,7 @@ class InstanceSpawner(Spawner):
         start_notebook_cmd = " ".join(start_notebook_cmd)
         self.log.info("Starting user %s jupyterhub" % self.user.name)
         with settings(user = self.user.name, key_filename = FABRIC_DEFAULTS["key_filename"],  host_string=worker_ip_address_string):
-             yield sudo("%s %s --user=%s --notebook-dir=/home/%s/ --allow-root > /tmp/jupyter.log 2>&1 &" % (lenv, start_notebook_cmd,self.user.name,self.user.name),  pty=False)
+             yield sudo("%s %s --user=%s --notebook-dir=/ --allow-root > /tmp/jupyter.log 2>&1 &" % (lenv, start_notebook_cmd,self.user.name),  pty=False)
         self.log.debug("just started the notebook for user %s, waiting." % self.user.name)
         try:
             self.user.settings[self.user.name] = instance.public_ip_address
@@ -403,13 +415,16 @@ class InstanceSpawner(Spawner):
                      }
         BDM = [boot_drive]
         if SERVER_PARAMS["USER_HOME_EBS_SIZE"] > 0:
-            user_drive = {'DeviceName': '/dev/sdf',  # this is to be the user data drive
-                          'Ebs': {'VolumeSize': SERVER_PARAMS["USER_HOME_EBS_SIZE"],  # size in gigabytes
-                                  'DeleteOnTermination': False,
-                                  'VolumeType': 'gp2',  # General Purpose SSD
-                                  }
-                         }
-            BDM = [boot_drive, user_drive]
+#            user_drive = {'DeviceName': '/dev/sdf',  # this is to be the user data drive
+#                          'Ebs': {'VolumeSize': SERVER_PARAMS["USER_HOME_EBS_SIZE"],  # size in gigabytes
+#                                  'DeleteOnTermination': False,
+#                                  'VolumeType': 'gp2',  # General Purpose SSD
+#                                  }
+#                         }
+            volume = yield retry(ec2.create_volume, AvailabilityZone = SERVER_PARAMS["REGION"]+'b', 
+                                       Size = SERVER_PARAMS["USER_HOME_EBS_SIZE"], 
+                                       VolumeType = 'gp2')
+
         # create new instance
         reservation = yield retry(
                 ec2.run_instances,
@@ -417,14 +432,15 @@ class InstanceSpawner(Spawner):
                 MinCount=1,
                 MaxCount=1,
                 KeyName=SERVER_PARAMS["KEY_NAME"],
-                InstanceType=SERVER_PARAMS["INSTANCE_TYPE"],
+                InstanceType=self.user_options['INSTANCE_TYPE'],
                 SubnetId=SERVER_PARAMS["SUBNET_ID"],
                 SecurityGroupIds=SERVER_PARAMS["WORKER_SECURITY_GROUPS"],
                 BlockDeviceMappings=BDM,
         )
         instance_id = reservation["Instances"][0]["InstanceId"]
+        volume_id = volume['VolumeId']
         instance = yield retry(resource.Instance, instance_id)
-        Server.new_server(instance_id, self.user.name)
+        Server.new_server(instance_id, self.user.name, volume_id)
         yield retry(instance.wait_until_exists)
         # add server tags; tags cannot be added until server exists
         yield retry(instance.create_tags, Tags=WORKER_TAGS)
@@ -432,4 +448,17 @@ class InstanceSpawner(Spawner):
         # start server
         # blocking calls should be wrapped in a Future
         yield retry(instance.wait_until_running)
+        # Attach persistent EBS
+        yield retry(instance.attach_volume, 
+                    Device='/dev/sdf', 
+                    VolumeId = volume_id, 
+                    InstanceId = instance_id)
         return instance
+    
+    def options_from_form(self, formdata):
+        options = {}
+        arg_s = formdata.get('instance_type', [''])[0].strip()
+        if arg_s:
+            options['INSTANCE_TYPE'] = arg_s
+        return options
+    
