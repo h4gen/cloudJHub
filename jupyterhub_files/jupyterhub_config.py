@@ -11,16 +11,16 @@ sys.path.insert(1, '/etc/jupyterhub')
 c = get_config()
 
 c.JupyterHub.cookie_secret_file	= '/etc/jupyterhub/cookie_secret'
-c.JupyterHub.db_url		= '/etc/jupyterhub/jupyterhub.sqlite'
+#c.JupyterHub.db_url		= '/etc/jupyterhub/jupyterhub.sqlite'
 
-# To use Postgres
+# To use MySQL DB
 #c.JupyterHub.db_url = "mysql://{}:{}@{}/{}".format(DB_USERNAME, DB_USERPASSWORD, DB_HOSTNAME, DB_NAME)
 # Replace
-#   DB_NAME with the existed jupyterhub database name in Postgres server
-#   DB_HOST with the DNS or the IP of the Postgres host
+#   DB_NAME with the existed jupyterhub database name in MySQL server
+#   DB_HOST with the DNS or the IP of the MySQL host
 #   DB_USERNAME and DB_USERPASSWORD with username and password of a privileged user.
 # Example :
-#c.JupyterHub.db_url = "postgresql://{}:{}@{}/{}".format("jupyterhubdbuser", "","","jupyterhubdb")
+c.JupyterHub.db_url = "postgresql://{}:{}@{}/{}".format("jupyterhubdbuser", "geexoo8Tie5H","jupyterhubdb.cbkexvunm3cv.eu-central-1.rds.amazonaws.com","jupyterhubdb")
 
 
 
@@ -46,15 +46,10 @@ c.ConfigurableHTTPProxy.auth_token	=  binascii.b2a_hex(os.urandom(16))
 c.HubAuth.api_token		        = binascii.b2a_hex(os.urandom(16))
 
 #Configure Jupyterlab
-<<<<<<< HEAD
 #c.Spawner.default_url = '/lab'
 c.Spawner.cmd = ['jupyterhub-singleuser']
 #c.Spawner.cmd = ['jupyter-labhub']
 
-=======
-c.Spawner.default_url = '/lab'
-c.Spawner.cmd = ['jupyterhub-singleuser']
->>>>>>> 4d1b05085845dbfbb347fd1df84c0dfcbd3c3013
 
 with open("/etc/jupyterhub/api_token.txt", 'r') as f:
     api_token = f.read().strip()
@@ -64,14 +59,6 @@ c.Spawner.poll_interval = 10
 c.Spawner.http_timeout = 300
 c.Spawner.start_timeout = 300
 
-<<<<<<< HEAD
-=======
-# when there is already a spawn pending for a user
-c.Spawner.options_form = """
-<label for="instance_type">Type in instance type</label>
-<input name="instance_type" placeholder="e.g. t2.small"></input>
-"""
->>>>>>> 4d1b05085845dbfbb347fd1df84c0dfcbd3c3013
 #c.JupyterHub.tornado_settings = {
 #    slow_spawn_timeout : 30
 #}
@@ -124,6 +111,7 @@ c.JupyterHub.services = [
 # when there is already a spawn pending for a user
 c.Spawner.options_form = """
 <label for="instance_type">Type in instance type</label>
+<br>
 <select name="instance_type">
 <option value='m1.small'>m1.small</option>
 <option value='m1.medium'>m1.medium</option>
@@ -266,4 +254,17 @@ c.Spawner.options_form = """
 <option value='i3.16xlarge'>i3.16xlarge</option>
 <option value='i3.metal'>i3.metal</option>
 </select>
+<br>
+<label for="ebs_vol_size">Insert EBS volume size if you start a new server and don't want to attach an old volume</label>
+<br>
+<input name="ebs_vol_size" placeholder="10"></input>
+<br>
+<label for="ebs_vol_id">Insert EBS volume id if you want to attach an old volume to a new server</label>
+<br>
+<input name="ebs_vol_id" placeholder="vol-"></input>
+<br>
+<label for="ebs_snap_id">Insert EBS snapshot id if you want to create and attach a volume from a snapshot to a new server</label>
+<br>
+<input name="ebs_snap_id" placeholder="snap-"></input>
+<br>
 """
