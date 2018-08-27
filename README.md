@@ -2,7 +2,7 @@ idaJHub
 =======================
 An implementation of JupyterHub within the Amazon cloud (AWS) for use in a professional data science context.
 This software is a fork of github.com/harvard/cloudJHub.
-idaHub aims on giving the data scientist maximum control over his development, while sustaining the integrity of the data.
+idaHub aims on giving the data scientist maximum control over his development environment, while sustaining the integrity of the data.
 
 ### Overview ###
 
